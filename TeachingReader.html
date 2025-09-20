@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>教學日誌瀏覽器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 自訂樣式，讓卡片展開/收合有過渡動畫效果 */
+        .log-content {
+            transition: all 0.3s ease-in-out;
+            overflow: hidden;
+            max-height: 0;
+        }
+        .log-content.expanded {
+            max-height: 1000px; /* 一個足夠大的值來容納內容 */
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+        }
+        /* 讓拖曳時的覆蓋層更明顯 */
+        .drag-over {
+            border-color: #2563eb; /* a blue color */
+            background-color: #eff6ff; /* a light blue color */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans">
+
+    <div id="app" class="container mx-auto p-4 md:p-8 max-w-5xl">
+
+        <header id="app-header" class="hidden mb-6">
+            <div class="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-lg shadow">
+                <h1 class="text-2xl font-bold text-gray-700 mb-2 md:mb-0">教學日誌瀏覽器</h1>
+                <div class="flex items-center space-x-4">
+                    <span id="log-count" class="text-lg font-semibold text-gray-600">日誌總數：0</span>
+                    <button id="toggle-all-btn" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition">全部展開</button>
+                </div>
+            </div>
+        </header>
+
+        <div id="file-drop-zone" class="text-center p-10 md:p-20 border-4 border-dashed border-gray-300 rounded-xl cursor-pointer hover:border-blue-500 hover:bg-gray-50 transition-all">
+            <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+            <h2 class="mt-4 text-xl font-semibold text-gray-700">點擊此處或拖曳檔案以匯入教學日誌 (.json)</h2>
+            <p class="mt-2 text-sm text-gray-500">您可以一次選擇或拖曳單一或多個檔案。</p>
+            <input type="file" id="file-input" multiple accept=".json" class="hidden">
+        </div>
+
+        <main id="log-list-container" class="hidden">
+            </main>
+
+        <div id="welcome-message" class="text-center py-16 hidden">
+            <h2 class="text-2xl font-bold text-gray-600">目前沒有日誌</h2>
+            <p class="mt-2 text-gray-500">請從上方匯入新的日誌檔案。</p>
+        </div>
+
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- 狀態管理 ---
+            let allLogs = [];
+            let existingLogIds = new Set();
+            let areAllExpanded = false;
+
+            // --- DOM 元素參照 ---
+            const fileDropZone = document.getElementById('file-drop-zone');
+            const fileInput = document.getElementById('file-input');
+            const appHeader = document.getElementById('app-header');
+            const logListContainer = document.getElementById('log-list-container');
+            const logCount = document.getElementById('log-count');
+            const toggleAllBtn = document.getElementById('toggle-all-btn');
+            const welcomeMessage = document.getElementById('welcome-message');
+
+            // --- 事件監聽器 ---
+            fileDropZone.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+            // 拖曳功能
+            fileDropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fileDropZone.classList.add('drag-over');
+            });
+            fileDropZone.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fileDropZone.classList.remove('drag-over');
+            });
+            fileDropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fileDropZone.classList.remove('drag-over');
+                handleFiles(e.dataTransfer.files);
+            });
+            
+            // 全部展開/收合
+            toggleAllBtn.addEventListener('click', toggleAllCards);
+            
+            // 卡片獨立展開/收合 (事件委派)
+            logListContainer.addEventListener('click', (e) => {
+                const cardHeader = e.target.closest('.log-card-header');
+                if (cardHeader) {
+                    const content = cardHeader.nextElementSibling;
+                    const icon = cardHeader.querySelector('svg');
+                    content.classList.toggle('expanded');
+                    icon.classList.toggle('rotate-180');
+                }
+            });
+
+            // --- 核心功能函式 ---
+
+            /**
+             * 處理傳入的檔案列表
+             * @param {FileList} files - 使用者選擇或拖曳的檔案
+             */
+            function handleFiles(files) {
+                const jsonFiles = Array.from(files).filter(file => file.type === 'application/json' || file.name.endsWith('.json'));
+                if (jsonFiles.length === 0) {
+                    alert('請選擇有效的 .json 檔案。');
+                    return;
+                }
+
+                const fileReadPromises = jsonFiles.map(readFile);
+
+                Promise.all(fileReadPromises)
+                    .then(filesContents => {
+                        let newLogsAdded = false;
+                        filesContents.forEach(logs => {
+                            if (processLogData(logs)) {
+                                newLogsAdded = true;
+                            }
+                        });
+                        
+                        if (newLogsAdded) {
+                            renderLogs();
+                        } else {
+                            alert('沒有新的日誌被加入，可能是因為日誌ID重複。');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('讀取或解析檔案時出錯:', error);
+                        alert(`處理檔案時發生錯誤：${error.message}`);
+                    });
+            }
+
+            /**
+             * 讀取單一檔案並解析為 JSON
+             * @param {File} file
+             * @returns {Promise<Array<Object>>}
+             */
+            function readFile(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        try {
+                            const data = JSON.parse(event.target.result);
+                            if (!Array.isArray(data)) {
+                                throw new Error('JSON 格式不符，根結構應為一個陣列。');
+                            }
+                            resolve(data);
+                        } catch (e) {
+                            reject(new Error(`解析檔案 "${file.name}" 失敗: ${e.message}`));
+                        }
+                    };
+                    reader.onerror = (error) => reject(new Error(`讀取檔案 "${file.name}" 失敗: ${error}`));
+                    reader.readAsText(file);
+                });
+            }
+
+            /**
+             * 處理來自單一檔案的日誌資料，進行去重並加入全域列表
+             * @param {Array<Object>} logs - 從檔案解析出的日誌陣列
+             * @returns {boolean} - 是否有新的日誌被加入
+             */
+            function processLogData(logs) {
+                let newLogsFound = false;
+                logs.forEach(log => {
+                    // 驗證 log 物件是否包含必要欄位
+                    if (log && log.id && !existingLogIds.has(log.id)) {
+                        allLogs.push(log);
+                        existingLogIds.add(log.id);
+                        newLogsFound = true;
+                    }
+                });
+                return newLogsFound;
+            }
+
+            /**
+             * 渲染所有日誌到畫面上
+             */
+            function renderLogs() {
+                // 如果沒有任何日誌，顯示歡迎訊息
+                if (allLogs.length === 0) {
+                    welcomeMessage.classList.remove('hidden');
+                    logListContainer.classList.add('hidden');
+                    appHeader.classList.add('hidden');
+                    return;
+                }
+
+                // 顯示主介面，隱藏初始匯入區
+                fileDropZone.classList.add('hidden');
+                welcomeMessage.classList.add('hidden');
+                appHeader.classList.remove('hidden');
+                logListContainer.classList.remove('hidden');
+
+                // 更新日誌總數
+                logCount.textContent = `日誌總數：${allLogs.length}`;
+
+                // 根據日期由新到舊排序
+                allLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+                // 產生 HTML
+                logListContainer.innerHTML = allLogs.map(log => createLogCardHTML(log)).join('');
+                
+                // 確保新渲染的卡片符合目前的展開/收合狀態
+                if (areAllExpanded) {
+                    document.querySelectorAll('.log-content').forEach(el => el.classList.add('expanded'));
+                    document.querySelectorAll('.log-card-header svg').forEach(el => el.classList.add('rotate-180'));
+                }
+            }
+            
+            /**
+             * 建立單張日誌卡片的 HTML 字串
+             * @param {Object} log - 日誌物件
+             * @returns {string}
+             */
+            function createLogCardHTML(log) {
+                const { id, date, teachingClass, teachingTopic, content } = log;
+                
+                // 對 content 進行簡單的格式化，將換行符轉為 <br>
+                const formattedContent = content.replace(/\n/g, '<br>');
+
+                return `
+                    <div class="log-card bg-white rounded-lg shadow-md mb-4 overflow-hidden" data-id="${id}">
+                        <div class="log-card-header p-4 cursor-pointer hover:bg-gray-50 flex justify-between items-center">
+                            <div>
+                                <p class="text-sm text-gray-500">${date}</p>
+                                <h3 class="text-lg font-semibold text-blue-700">${teachingTopic}</h3>
+                                <p class="text-md text-gray-600">班級：${teachingClass}</p>
+                            </div>
+                            <svg class="w-6 h-6 text-gray-500 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        </div>
+                        <div class="log-content px-4 text-gray-700 leading-relaxed">
+                           <div class="prose max-w-none">${formattedContent}</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            /**
+             * 切換所有卡片的展開/收合狀態
+             */
+            function toggleAllCards() {
+                areAllExpanded = !areAllExpanded;
+                const contents = document.querySelectorAll('.log-content');
+                const icons = document.querySelectorAll('.log-card-header svg');
+
+                if (areAllExpanded) {
+                    contents.forEach(el => el.classList.add('expanded'));
+                    icons.forEach(el => el.classList.add('rotate-180'));
+                    toggleAllBtn.textContent = '全部收合';
+                    toggleAllBtn.classList.replace('bg-blue-500', 'bg-indigo-500');
+                    toggleAllBtn.classList.replace('hover:bg-blue-600', 'hover:bg-indigo-600');
+                } else {
+                    contents.forEach(el => el.classList.remove('expanded'));
+                    icons.forEach(el => el.classList.remove('rotate-180'));
+                    toggleAllBtn.textContent = '全部展開';
+                    toggleAllBtn.classList.replace('bg-indigo-500', 'bg-blue-500');
+                    toggleAllBtn.classList.replace('hover:bg-indigo-600', 'hover:bg-blue-600');
+                }
+            }
+        });
+    </script>
+
+</body>
+</html>
