@@ -29,11 +29,16 @@
     <div id="app" class="container mx-auto p-4 md:p-8 max-w-5xl">
 
         <header id="app-header" class="hidden mb-6">
-            <div class="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-lg shadow">
-                <h1 class="text-2xl font-bold text-gray-700 mb-2 md:mb-0">教學日誌瀏覽器</h1>
-                <div class="flex items-center space-x-4">
-                    <span id="log-count" class="text-lg font-semibold text-gray-600">日誌總數：0</span>
-                    <button id="toggle-all-btn" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition">全部展開</button>
+            <div class="bg-white p-4 rounded-lg shadow space-y-4">
+                <div class="flex flex-col md:flex-row justify-between items-center">
+                    <h1 class="text-2xl font-bold text-gray-700 mb-2 md:mb-0">教學日誌瀏覽器</h1>
+                    <div class="flex items-center space-x-4">
+                        <span id="log-count" class="text-lg font-semibold text-gray-600 whitespace-nowrap">日誌總數：0</span>
+                        <button id="toggle-all-btn" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition">全部展開</button>
+                    </div>
+                </div>
+                 <div class="w-full">
+                    <input type="search" id="search-input" placeholder="搜尋日期、班級、主題或內容..." class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
                 </div>
             </div>
         </header>
@@ -49,11 +54,12 @@
 
         <main id="log-list-container" class="hidden">
             </main>
-
-        <div id="welcome-message" class="text-center py-16 hidden">
-            <h2 class="text-2xl font-bold text-gray-600">目前沒有日誌</h2>
-            <p class="mt-2 text-gray-500">請從上方匯入新的日誌檔案。</p>
+        
+        <div id="no-results-message" class="text-center py-16 hidden">
+            <h2 class="text-2xl font-bold text-gray-600">找不到符合條件的日誌</h2>
+            <p class="mt-2 text-gray-500">請嘗試更換您的搜尋關鍵字。</p>
         </div>
+
 
     </div>
 
@@ -71,7 +77,8 @@
             const logListContainer = document.getElementById('log-list-container');
             const logCount = document.getElementById('log-count');
             const toggleAllBtn = document.getElementById('toggle-all-btn');
-            const welcomeMessage = document.getElementById('welcome-message');
+            const searchInput = document.getElementById('search-input'); // 搜尋框
+            const noResultsMessage = document.getElementById('no-results-message');
 
             // --- 事件監聽器 ---
             fileDropZone.addEventListener('click', () => fileInput.click());
@@ -109,12 +116,11 @@
                 }
             });
 
+            // 搜尋功能
+            searchInput.addEventListener('input', filterAndRenderLogs);
+
             // --- 核心功能函式 ---
 
-            /**
-             * 處理傳入的檔案列表
-             * @param {FileList} files - 使用者選擇或拖曳的檔案
-             */
             function handleFiles(files) {
                 const jsonFiles = Array.from(files).filter(file => file.type === 'application/json' || file.name.endsWith('.json'));
                 if (jsonFiles.length === 0) {
@@ -134,7 +140,7 @@
                         });
                         
                         if (newLogsAdded) {
-                            renderLogs();
+                            filterAndRenderLogs(); // 改為呼叫帶有過濾功能的渲染函式
                         } else {
                             alert('沒有新的日誌被加入，可能是因為日誌ID重複。');
                         }
@@ -145,11 +151,6 @@
                     });
             }
 
-            /**
-             * 讀取單一檔案並解析為 JSON
-             * @param {File} file
-             * @returns {Promise<Array<Object>>}
-             */
             function readFile(file) {
                 return new Promise((resolve, reject) => {
                     const reader = new FileReader();
@@ -169,15 +170,9 @@
                 });
             }
 
-            /**
-             * 處理來自單一檔案的日誌資料，進行去重並加入全域列表
-             * @param {Array<Object>} logs - 從檔案解析出的日誌陣列
-             * @returns {boolean} - 是否有新的日誌被加入
-             */
             function processLogData(logs) {
                 let newLogsFound = false;
                 logs.forEach(log => {
-                    // 驗證 log 物件是否包含必要欄位
                     if (log && log.id && !existingLogIds.has(log.id)) {
                         allLogs.push(log);
                         existingLogIds.add(log.id);
@@ -188,31 +183,54 @@
             }
 
             /**
-             * 渲染所有日誌到畫面上
+             * 根據搜尋條件過濾日誌並觸發渲染
              */
-            function renderLogs() {
-                // 如果沒有任何日誌，顯示歡迎訊息
+            function filterAndRenderLogs() {
+                const searchTerm = searchInput.value.toLowerCase().trim();
+                let filteredLogs = allLogs;
+
+                if (searchTerm) {
+                    filteredLogs = allLogs.filter(log => {
+                        return (log.date && log.date.toLowerCase().includes(searchTerm)) ||
+                               (log.teachingClass && log.teachingClass.toLowerCase().includes(searchTerm)) ||
+                               (log.teachingTopic && log.teachingTopic.toLowerCase().includes(searchTerm)) ||
+                               (log.content && log.content.toLowerCase().includes(searchTerm));
+                    });
+                }
+                
+                renderLogs(filteredLogs);
+            }
+            
+            /**
+             * 渲染指定的日誌列表到畫面上
+             * @param {Array<Object>} logsToRender - 要被渲染到畫面上的日誌陣列
+             */
+            function renderLogs(logsToRender) {
+                // 如果沒有任何日誌（初始狀態），則不執行任何操作，保持歡迎畫面
                 if (allLogs.length === 0) {
-                    welcomeMessage.classList.remove('hidden');
-                    logListContainer.classList.add('hidden');
-                    appHeader.classList.add('hidden');
                     return;
                 }
 
                 // 顯示主介面，隱藏初始匯入區
                 fileDropZone.classList.add('hidden');
-                welcomeMessage.classList.add('hidden');
                 appHeader.classList.remove('hidden');
                 logListContainer.classList.remove('hidden');
+                
+                // 清空目前的列表
+                logListContainer.innerHTML = '';
+                
+                // 更新日誌總數，顯示篩選結果
+                logCount.textContent = `顯示 ${logsToRender.length} / 共 ${allLogs.length} 筆`;
 
-                // 更新日誌總數
-                logCount.textContent = `日誌總數：${allLogs.length}`;
-
-                // 根據日期由新到舊排序
-                allLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-                // 產生 HTML
-                logListContainer.innerHTML = allLogs.map(log => createLogCardHTML(log)).join('');
+                if (logsToRender.length === 0) {
+                    noResultsMessage.classList.remove('hidden');
+                } else {
+                    noResultsMessage.classList.add('hidden');
+                    // 根據日期由新到舊排序
+                    logsToRender.sort((a, b) => new Date(b.date) - new Date(a.date));
+                    // 產生 HTML
+                    logListContainer.innerHTML = logsToRender.map(createLogCardHTML).join('');
+                }
                 
                 // 確保新渲染的卡片符合目前的展開/收合狀態
                 if (areAllExpanded) {
@@ -221,16 +239,9 @@
                 }
             }
             
-            /**
-             * 建立單張日誌卡片的 HTML 字串
-             * @param {Object} log - 日誌物件
-             * @returns {string}
-             */
             function createLogCardHTML(log) {
                 const { id, date, teachingClass, teachingTopic, content } = log;
-                
-                // 對 content 進行簡單的格式化，將換行符轉為 <br>
-                const formattedContent = content.replace(/\n/g, '<br>');
+                const formattedContent = content ? content.replace(/\n/g, '<br>') : '無內容';
 
                 return `
                     <div class="log-card bg-white rounded-lg shadow-md mb-4 overflow-hidden" data-id="${id}">
@@ -249,9 +260,6 @@
                 `;
             }
 
-            /**
-             * 切換所有卡片的展開/收合狀態
-             */
             function toggleAllCards() {
                 areAllExpanded = !areAllExpanded;
                 const contents = document.querySelectorAll('.log-content');
